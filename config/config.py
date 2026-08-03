@@ -6,9 +6,13 @@ class Settings(BaseSettings):
     raw_data_dir: Path = Path("data/financial/sec-edgar-filings")
     cleaned_data_dir: Path = Path("data/financial/cleaned")
     chunks_output_path: Path = Path("data/chunks.jsonl")
+    sql_output_path: Path = Path("data/financial/company_facts_raw.json")
+    db_path: Path = Path("data/financials.db")
+
+    target_cik: str = "0000019617"
+    sql_url: str= "https://data.sec.gov/api/xbrl/companyfacts/CIK{CIK}.json"
 
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
-
     pinecone_api_key: str = ""
     pinecone_index_name: str = "financial-rag"
     pinecone_cloud: str = "aws"
