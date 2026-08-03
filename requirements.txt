@@ -18,3 +18,6 @@ tqdm==4.66.4
 
 #pinecone
 pinecone==3.2.0
+
+#BM25
+rank-bm25==0.2.2
