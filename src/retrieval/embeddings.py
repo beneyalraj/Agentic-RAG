@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import logging
 from typing import List, Union, Optional
 import numpy as np

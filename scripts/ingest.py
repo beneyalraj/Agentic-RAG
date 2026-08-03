@@ -92,7 +92,7 @@ def process_documents(data_dir: Path) -> List[DocumentChunk]:
             source = f"{filing_type}_{accession}"
 
             for split_idx, split_text in enumerate(splits):
-                unique_string = f"{filepath.name}_{doc_idx}_{split_idx}"
+                unique_string = f"{source}_{doc_idx}_{split_idx}"
                 chunk_id = hashlib.md5(unique_string.encode('utf-8')).hexdigest()
                 page_num = doc.metadata.get('page', 1) if filepath.suffix.lower() == '.pdf' else 1
 

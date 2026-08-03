@@ -7,7 +7,12 @@ class Settings(BaseSettings):
     cleaned_data_dir: Path = Path("data/financial/cleaned")
     chunks_output_path: Path = Path("data/chunks.jsonl")
 
-    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2" 
+    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+
+    pinecone_api_key: str = ""
+    pinecone_index_name: str = "financial-rag"
+    pinecone_cloud: str = "aws"
+    pinecone_region: str = "us-east-1"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
