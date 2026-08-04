@@ -1,6 +1,6 @@
+import re
 import json
 import logging
-import re
 from typing import Any, Dict, List
 from groq import AsyncGroq
 from config.config import settings
@@ -223,7 +223,7 @@ async def tool_execution_node(state: AgentState) -> Dict[str, Any]:
         logger.info(f"Calling tool: {tool_name} with args {args}")
         try:
             if tool_name == "search_filings":
-                result = tool_search_filings(**args)
+                result = await tool_search_filings(**args)
             elif tool_name == "sql_query":
                 result = tool_sql_query(**args)
             elif tool_name == "calculator":
@@ -284,4 +284,5 @@ async def finalizer_node(state: AgentState) -> Dict[str, Any]:
 
     final_answer = response.choices[0].message.content
     final_answer = re.sub(r'\$\\boxed\{([^}]+)\}\$', r'\1', final_answer)
+    final_answer = re.sub(r'\\boxed\{([^}]+)\}', r'\1', final_answer)
     return {"final_answer": final_answer}

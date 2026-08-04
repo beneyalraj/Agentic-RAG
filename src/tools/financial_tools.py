@@ -4,6 +4,7 @@ import logging
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict
+import asyncio 
 
 import sqlparse
 
@@ -16,7 +17,6 @@ from src.retrieval.embeddings import get_embedding_model
 logger = logging.getLogger(__name__)
 
 _retriever = None
-_db_conn = None
 _chunks_metadata = None
 
 
@@ -45,14 +45,12 @@ def get_retriever() -> HybridRetriever:
     return _retriever
 
 
-def get_db_connection() -> sqlite3.Connection:
-    global _db_conn
-    if _db_conn is None:
-        db_path = Path("data/financials.db").absolute()
-        uri = f"file:{db_path}?mode=ro"
-        _db_conn = sqlite3.connect(uri, uri=True, isolation_level=None)
-        _db_conn.row_factory = sqlite3.Row
-    return _db_conn
+def _get_db_connection() -> sqlite3.Connection:
+    db_path = Path("data/financials.db").absolute()
+    uri = f"file:{db_path}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def get_chunks_metadata() -> Dict[str, Any]:
@@ -82,7 +80,13 @@ def get_chunks_metadata() -> Dict[str, Any]:
             _chunks_metadata = {"error": str(e)}
     return _chunks_metadata
 
-
+def tool_calculator(expression: str) -> str:
+    try:
+        result = safe_eval(expression)
+        return f"{result}"
+    except Exception as e:
+        return f"Error: {e}"
+        
 def is_read_only_sql(sql: str) -> bool:
     parsed = sqlparse.parse(sql)
     if not parsed:
@@ -108,10 +112,10 @@ def safe_eval(expr: str) -> float:
     return float(eval(code, safe_globals))
 
 
-def tool_search_filings(query: str, top_k: int = 5) -> str:
+async def tool_search_filings(query: str, top_k: int = 5) -> str:
     try:
         retriever = get_retriever()
-        results = retriever.hybrid_search(query=query, top_k=top_k)
+        results = await asyncio.to_thread(retriever.hybrid_search, query=query, top_k=top_k)
         if not results:
             return "No results found."
         output = []
@@ -126,10 +130,11 @@ def tool_search_filings(query: str, top_k: int = 5) -> str:
         return f"Error in search_filings: {e}"
 
 
+
 def tool_sql_query(sql: str) -> str:
     if not is_read_only_sql(sql):
         return "Error: Only SELECT queries are allowed for security."
-    conn = get_db_connection()
+    conn = _get_db_connection()
     try:
         cursor = conn.execute(sql)
         rows = cursor.fetchall()
@@ -150,15 +155,8 @@ def tool_sql_query(sql: str) -> str:
         return result.strip()
     except Exception as e:
         return f"SQL error: {e}"
-
-
-def tool_calculator(expression: str) -> str:
-    try:
-        result = safe_eval(expression)
-        return f"{result}"
-    except Exception as e:
-        return f"Error: {e}"
-
+    finally:
+        conn.close()
 
 def tool_financial_ratio_calculator(ratio_name: str, **kwargs) -> str:
     try:
@@ -197,7 +195,7 @@ def tool_financial_ratio_calculator(ratio_name: str, **kwargs) -> str:
 
 def tool_get_filing_metadata() -> str:
     meta = get_chunks_metadata()
-    conn = get_db_connection()
+    conn = _get_db_connection()
     try:
         total_rows = conn.execute("SELECT COUNT(*) as total FROM financial_metrics").fetchone()["total"]
         row = conn.execute("SELECT MIN(period_end) as min_date, MAX(period_end) as max_date FROM financial_metrics").fetchone()
@@ -205,6 +203,8 @@ def tool_get_filing_metadata() -> str:
         metrics = [r["metric_name"] for r in conn.execute("SELECT DISTINCT metric_name FROM financial_metrics ORDER BY metric_name").fetchall()]
     except Exception as e:
         return f"Error querying DB: {e}"
+    finally:
+        conn.close()
 
     summary = f"""
         Data Overview:

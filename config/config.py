@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     chunks_output_path: Path = Path("data/chunks.jsonl")
     sql_output_path: Path = Path("data/financial/company_facts_raw.json")
     db_path: Path = Path("data/financials.db")
+    BASE_URL: str = "http://localhost:8000/api/v1"
 
     target_cik: str = "0000019617"
     sql_url: str= "https://data.sec.gov/api/xbrl/companyfacts/CIK{CIK}.json"

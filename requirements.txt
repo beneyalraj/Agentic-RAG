@@ -22,11 +22,13 @@ pinecone==3.2.0
 #BM25
 rank-bm25==0.2.2
 
-# MCP SDK
-mcp==1.9.4
-
 # SQL parsing for read‑only enforcement
 sqlparse==0.5.5
 
 langgraph==0.2.0
 groq==0.9.0
+
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+python-multipart==0.0.12
+requests==2.32.3 
