@@ -5,6 +5,7 @@ from src.retrieval.embeddings import get_embedding_model
 from src.retrieval.vector_store import PineconeVectorStore
 from src.retrieval.bm25 import BM25Index
 from src.retrieval.hybrid_retriever import HybridRetriever
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     pinecone_cloud: str = "aws"
     pinecone_region: str = "us-east-1"
 
+    groq_api_key: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    max_iterations: int = 5
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 settings = Settings()
