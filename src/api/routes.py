@@ -9,42 +9,44 @@ from src.agent.graph import agent_graph
 from src.agent.state import AgentState
 from src.retrieval.vector_store import PineconeVectorStore
 from config.config import settings
-
+from src.observability.langfuse_tracer import trace_request 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.post("/query", response_model=QueryResponse)
 async def query_endpoint(request: QueryRequest):
-
+    
     thread_id = request.thread_id or str(uuid.uuid4())
+    async with trace_request(request.query, thread_id) as trace:
+        initial_state: AgentState = {
+            "query": request.query,
+            "messages": [],
+            "tool_calls_made": [],
+            "tool_results": [],
+            "final_answer": None,
+            "iteration_count": 0,
+        }
 
-    initial_state: AgentState = {
-        "query": request.query,
-        "messages": [],
-        "tool_calls_made": [],
-        "tool_results": [],
-        "final_answer": None,
-        "iteration_count": 0,
-    }
+        try:
+            config = {"configurable": {"thread_id": thread_id}}
+            final_state = await agent_graph.ainvoke(initial_state, config=config)
+        except Exception as e:
+            logger.exception("Agent execution failed")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Agent execution error: {str(e)}"
+            )
 
-    try:
-        config = {"configurable": {"thread_id": thread_id}}
-        final_state = await agent_graph.ainvoke(initial_state, config=config)
-    except Exception as e:
-        logger.exception("Agent execution failed")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Agent execution error: {str(e)}"
+        answer = final_state.get("final_answer", "Sorry, I could not generate an answer.")
+        tool_calls = final_state.get("tool_calls_made", [])
+
+        trace.output = {"answer": answer, "tool_calls": tool_calls}
+
+        return QueryResponse(
+            answer=answer,
+            tool_calls_made=tool_calls,
+            thread_id=thread_id,
         )
-
-    answer = final_state.get("final_answer", "Sorry, I could not generate an answer.")
-    tool_calls = final_state.get("tool_calls_made", [])
-
-    return QueryResponse(
-        answer=answer,
-        tool_calls_made=tool_calls,
-        thread_id=thread_id,
-    )
 
 
 @router.get("/health", response_model=HealthResponse)

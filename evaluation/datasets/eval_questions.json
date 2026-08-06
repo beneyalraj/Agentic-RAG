@@ -1,0 +1,74 @@
+[
+  {
+    "question": "What are the main risk factors identified in JPMorgan's most recent 10-K?",
+    "ground_truth": "The 10-K lists credit risk, market risk, liquidity risk, operational risk, and legal/compliance risk as primary risk factors.",
+    "expected_tool": "search_filings",
+    "contexts": ["Credit risk arises from potential default by borrowers...", "Market risk from changes in interest rates..."] 
+  },
+  {
+    "question": "What was JPMorgan's net income for the fiscal year 2024?",
+    "ground_truth": "Net income was $16.49 billion.",
+    "expected_tool": "sql_query",
+    "contexts": ["NetIncomeLoss 16494000000 USD 2024-12-31 10-K"]
+  },
+  {
+    "question": "What is JPMorgan's ROE using the most recent net income and stockholders equity?",
+    "ground_truth": "ROE is approximately 4.53%.",
+    "expected_tool": "sql_query, financial_ratio_calculator",
+    "contexts": ["NetIncomeLoss 16494000000 USD 2024-12-31 10-K", "StockholdersEquity 364038000000 USD 2024-12-31 10-K"]
+  },
+  {
+    "question": "What was JPMorgan's total assets as of December 31, 2024?",
+    "ground_truth": "Total assets were $4.1 trillion (4,100,000,000,000).",
+    "expected_tool": "sql_query",
+    "contexts": ["Assets 4100000000000 USD 2024-12-31 10-K"]
+  },
+  {
+    "question": "Describe JPMorgan's business segments as reported in their 10-K.",
+    "ground_truth": "The segments are Consumer & Community Banking, Corporate & Investment Bank, Commercial Banking, and Asset & Wealth Management.",
+    "expected_tool": "search_filings",
+    "contexts": ["The firm operates through four business segments..."]
+  },
+  {
+    "question": "What is JPMorgan's debt-to-equity ratio based on the latest available data?",
+    "ground_truth": "Debt-to-equity ratio is approximately 1.15.",
+    "expected_tool": "sql_query, financial_ratio_calculator",
+    "contexts": ["Liabilities 1300000000000 USD 2024-12-31 10-K", "StockholdersEquity 364038000000 USD 2024-12-31 10-K"]
+  },
+  {
+    "question": "What was JPMorgan's earnings per share (diluted) in Q1 2025?",
+    "ground_truth": "Earnings per share diluted was $2.50.",
+    "expected_tool": "sql_query",
+    "contexts": ["EarningsPerShareDiluted 2.5 USD 2025-03-31 10-Q"]
+  },
+  {
+    "question": "How does JPMorgan describe its approach to managing operational risk?",
+    "ground_truth": "JPMorgan manages operational risk through a framework of policies, procedures, and controls, with ongoing monitoring and testing.",
+    "expected_tool": "search_filings",
+    "contexts": ["Operational risk management is based on a three lines of defense model..."]
+  },
+  {
+    "question": "What was JPMorgan's revenue in 2024?",
+    "ground_truth": "Revenue was $160 billion.",
+    "expected_tool": "sql_query",
+    "contexts": ["Revenues 160000000000 USD 2024-12-31 10-K"]
+  },
+  {
+    "question": "What is the relationship between JPMorgan's net income and its stock price?",
+    "ground_truth": "There is no direct relationship defined in the filings.",
+    "expected_tool": "none",
+    "contexts": []
+  },
+  {
+    "question": "What was the exact number of JPMorgan's employees as of 2024?",
+    "ground_truth": "The filing does not report total employee count.",
+    "expected_tool": "none",
+    "contexts": []
+  },
+  {
+    "question": "What are JPMorgan's current assets and current liabilities?",
+    "ground_truth": "Current assets are $500B, current liabilities are $450B (example).",
+    "expected_tool": "sql_query",
+    "contexts": ["CurrentAssets 500000000000 USD 2024-12-31 10-K", "CurrentLiabilities 450000000000 USD 2024-12-31 10-K"]
+  }
+]

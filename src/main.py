@@ -3,14 +3,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.api.routes import router
+from src.observability.langfuse_tracer import flush
 
 logger = logging.getLogger(__name__)
+
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("FastAPI starting up...")
     yield
-    logger.info("FastAPI shutting down...")
+    logger.info("Shutting down, flushing Langfuse traces...")
+    flush()
 
 app = FastAPI(
     title="Agentic RAG Assistant",

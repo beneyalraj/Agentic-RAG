@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,8 +22,18 @@ class Settings(BaseSettings):
 
     groq_api_key: str = ""
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROW_SMALLER_MODEL: str = "llama-3.1-8b-instant"
     max_iterations: int = 5
+
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_BASE_URL: str = "https://cloud.langfuse.com"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 settings = Settings()
+
+os.environ["LANGFUSE_PUBLIC_KEY"] = settings.LANGFUSE_PUBLIC_KEY
+os.environ["LANGFUSE_SECRET_KEY"] = settings.LANGFUSE_SECRET_KEY
+os.environ["LANGFUSE_HOST"] = settings.LANGFUSE_BASE_URL
+os.environ["GROQ_API_KEY"] = settings.groq_api_key

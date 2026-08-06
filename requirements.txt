@@ -25,6 +25,7 @@ rank-bm25==0.2.2
 # SQL parsing for read‑only enforcement
 sqlparse==0.5.5
 
+langfuse==2.50.0
 langgraph==0.2.0
 groq==0.9.0
 

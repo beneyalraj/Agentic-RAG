@@ -6,6 +6,8 @@ from groq import AsyncGroq
 from config.config import settings
 from src.agent.state import AgentState
 from src.tools.financial_tools import ( tool_search_filings, tool_sql_query, tool_calculator, tool_financial_ratio_calculator, tool_get_filing_metadata,)
+from langfuse.decorators import observe
+from langfuse.decorators import langfuse_context
 
 logger = logging.getLogger(__name__)
 groq_client = AsyncGroq(api_key=settings.groq_api_key)
@@ -97,7 +99,7 @@ def extract_numeric_values(sql_result: str) -> set:
     raw = re.findall(r'\d+\.?\d*', sql_result)
     return {float(n) for n in raw if n}
 
-
+@observe(as_type="generation")
 async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     logger.info(f"Reasoning step {state['iteration_count'] + 1}")
 
@@ -158,6 +160,25 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
 
     assistant_message = response.choices[0].message
     clean_msg = {"role": "assistant", "content": assistant_message.content}
+    langfuse_context.update_current_observation(
+        name="groq_llm_call",
+        input={"messages": final_messages},
+        output={"content": assistant_message.content},
+        metadata={
+            "model": settings.GROQ_MODEL,
+            "temperature": 0.2,
+            "tool_choice": "auto" if not force_final else "none",
+        },
+    )
+
+    if hasattr(response, "usage") and response.usage:
+        langfuse_context.update_current_observation(
+            usage={
+                "input": response.usage.prompt_tokens,
+                "output": response.usage.completion_tokens,
+                "total": response.usage.total_tokens,
+            }
+        )
 
     tool_calls = assistant_message.tool_calls
     if tool_calls:
@@ -188,7 +209,7 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
             "iteration_count": state["iteration_count"] + 1,
         }
 
-
+@observe(as_type="span")
 async def tool_execution_node(state: AgentState) -> Dict[str, Any]:
     pending = state.get("pending_tool_calls", [])
     if not pending:
@@ -209,15 +230,17 @@ async def tool_execution_node(state: AgentState) -> Dict[str, Any]:
             unverified = [k for k, v in numeric_args.items() if float(v) not in retrieved_numbers]
             if unverified:
                 logger.warning(f"Rejected unverified inputs: {unverified}")
+                error_msg = (
+                    f"Error: The value(s) for {unverified} were not found in any sql_query "
+                    f"result in this conversation. You must call sql_query to retrieve the "
+                    f"real value before using it. Do not guess or estimate."
+                )
                 results.append({
                     "tool_call_id": tc["id"],
                     "tool_name": tool_name,
-                    "result": (
-                        f"Error: The value(s) for {unverified} were not found in any sql_query "
-                        f"result in this conversation. You must call sql_query to retrieve the "
-                        f"real value before using it. Do not guess or estimate."
-                    ),
+                    "result": error_msg,
                 })
+                langfuse_context.update_current_observation(level="WARNING")
                 continue
 
         logger.info(f"Calling tool: {tool_name} with args {args}")
@@ -234,10 +257,17 @@ async def tool_execution_node(state: AgentState) -> Dict[str, Any]:
                 result = tool_get_filing_metadata()
             else:
                 result = f"Error: Unknown tool '{tool_name}'"
+            
             results.append({"tool_call_id": tc["id"], "tool_name": tool_name, "result": result})
+            
+            if "Error" in result:
+                langfuse_context.update_current_observation(level="ERROR")
+
         except Exception as e:
             logger.error(f"Tool '{tool_name}' failed: {e}")
-            results.append({"tool_call_id": tc["id"], "tool_name": tool_name, "result": f"Error: {e}"})
+            error_result = f"Error: {e}"
+            results.append({"tool_call_id": tc["id"], "tool_name": tool_name, "result": error_result})
+            langfuse_context.update_current_observation(level="ERROR")
 
     new_tool_messages = [
         {"role": "tool", "tool_call_id": r["tool_call_id"], "content": r["result"]}
@@ -259,6 +289,7 @@ async def tool_execution_node(state: AgentState) -> Dict[str, Any]:
         "pending_tool_calls": [],
     }
 
+@observe(as_type="span")
 async def finalizer_node(state: AgentState) -> Dict[str, Any]:
     if state.get("final_answer"):
         return {"final_answer": state["final_answer"]}
@@ -280,6 +311,13 @@ async def finalizer_node(state: AgentState) -> Dict[str, Any]:
         model=settings.GROQ_MODEL,
         messages=full_messages,
         temperature=0.3,
+    )
+
+    langfuse_context.update_current_span(
+        name="groq_finalizer",
+        input={"messages": full_messages},
+        output={"content": final_answer},
+        metadata={"model": settings.GROQ_MODEL, "temperature": 0.3},
     )
 
     final_answer = response.choices[0].message.content
