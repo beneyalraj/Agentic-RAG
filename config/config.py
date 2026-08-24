@@ -21,9 +21,9 @@ class Settings(BaseSettings):
     pinecone_region: str = "us-east-1"
 
     groq_api_key: str = ""
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL: str = "llama-3.1-8b-instant"
     GROW_SMALLER_MODEL: str = "llama-3.1-8b-instant"
-    max_iterations: int = 5
+    max_iterations: int = 2
 
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""

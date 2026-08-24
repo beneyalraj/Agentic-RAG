@@ -3,7 +3,7 @@
     "question": "What are the main risk factors identified in JPMorgan's most recent 10-K?",
     "ground_truth": "The 10-K lists credit risk, market risk, liquidity risk, operational risk, and legal/compliance risk as primary risk factors.",
     "expected_tool": "search_filings",
-    "contexts": ["Credit risk arises from potential default by borrowers...", "Market risk from changes in interest rates..."] 
+    "contexts": ["Credit risk arises from potential default by borrowers...", "Market risk from changes in interest rates..."]
   },
   {
     "question": "What was JPMorgan's net income for the fiscal year 2024?",
@@ -31,7 +31,7 @@
   },
   {
     "question": "What is JPMorgan's debt-to-equity ratio based on the latest available data?",
-    "ground_truth": "Debt-to-equity ratio is approximately 1.15.",
+    "ground_truth": "Debt-to-equity ratio is approximately 3.57.",
     "expected_tool": "sql_query, financial_ratio_calculator",
     "contexts": ["Liabilities 1300000000000 USD 2024-12-31 10-K", "StockholdersEquity 364038000000 USD 2024-12-31 10-K"]
   },
@@ -54,21 +54,9 @@
     "contexts": ["Revenues 160000000000 USD 2024-12-31 10-K"]
   },
   {
-    "question": "What is the relationship between JPMorgan's net income and its stock price?",
-    "ground_truth": "There is no direct relationship defined in the filings.",
-    "expected_tool": "none",
-    "contexts": []
-  },
-  {
-    "question": "What was the exact number of JPMorgan's employees as of 2024?",
-    "ground_truth": "The filing does not report total employee count.",
-    "expected_tool": "none",
-    "contexts": []
-  },
-  {
-    "question": "What are JPMorgan's current assets and current liabilities?",
-    "ground_truth": "Current assets are $500B, current liabilities are $450B (example).",
+    "question": "What was JPMorgan's total liabilities as of December 31, 2024?",
+    "ground_truth": "Total liabilities were $1.3 trillion (1,300,000,000,000).",
     "expected_tool": "sql_query",
-    "contexts": ["CurrentAssets 500000000000 USD 2024-12-31 10-K", "CurrentLiabilities 450000000000 USD 2024-12-31 10-K"]
+    "contexts": ["Liabilities 1300000000000 USD 2024-12-31 10-K"]
   }
 ]

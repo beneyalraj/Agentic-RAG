@@ -4,8 +4,8 @@ import logging
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict
-import asyncio 
-
+import asyncio
+import re
 import sqlparse
 
 from config.config import settings
@@ -19,6 +19,30 @@ logger = logging.getLogger(__name__)
 _retriever = None
 _chunks_metadata = None
 
+def correct_metric_name(guessed_name: str) -> str | None:
+    """Maps common misspellings to the actual metric_name."""
+    valid_names = [
+        "Assets", "EarningsPerShareBasic", "EarningsPerShareDiluted",
+        "Liabilities", "NetIncomeLoss", "OperatingIncomeLoss",
+        "Revenues", "StockholdersEquity"
+    ]
+    mapping = {
+        "revenue": "Revenues",
+        "netincome": "NetIncomeLoss",
+        "equity": "StockholdersEquity",
+        "eps": "EarningsPerShareDiluted",
+        "totalassets": "Assets",
+        "totalliabilities": "Liabilities",
+    }
+    # Check if the guessed name matches any mapping
+    lower = guessed_name.lower()
+    if lower in mapping:
+        return mapping[lower]
+    # If it's close to a valid name (case-insensitive)
+    for valid in valid_names:
+        if valid.lower() == lower:
+            return valid
+    return None
 
 def get_retriever() -> HybridRetriever:
     global _retriever
@@ -80,13 +104,15 @@ def get_chunks_metadata() -> Dict[str, Any]:
             _chunks_metadata = {"error": str(e)}
     return _chunks_metadata
 
+
 def tool_calculator(expression: str) -> str:
     try:
         result = safe_eval(expression)
         return f"{result}"
     except Exception as e:
         return f"Error: {e}"
-        
+
+
 def is_read_only_sql(sql: str) -> bool:
     parsed = sqlparse.parse(sql)
     if not parsed:
@@ -112,9 +138,14 @@ def safe_eval(expr: str) -> float:
     return float(eval(code, safe_globals))
 
 
+# ================================================================
+# ✅ FIXED: tool_search_filings is now explicitly 'async def'
+# ================================================================
 async def tool_search_filings(query: str, top_k: int = 5) -> str:
+    """Hybrid search over SEC filings – this is the only async tool."""
     try:
         retriever = get_retriever()
+        # Run the blocking search in a thread so it doesn't block the event loop
         results = await asyncio.to_thread(retriever.hybrid_search, query=query, top_k=top_k)
         if not results:
             return "No results found."
@@ -130,10 +161,23 @@ async def tool_search_filings(query: str, top_k: int = 5) -> str:
         return f"Error in search_filings: {e}"
 
 
-
 def tool_sql_query(sql: str) -> str:
     if not is_read_only_sql(sql):
         return "Error: Only SELECT queries are allowed for security."
+    
+    # 🔥 STEP 1: Auto-correct the metric_name if possible
+    # Look for: metric_name = 'something' (case-insensitive)
+    match = re.search(r"metric_name\s*=\s*'([^']+)'", sql, re.IGNORECASE)
+    if match:
+        guessed = match.group(1)
+        corrected = correct_metric_name(guessed)
+        if corrected and corrected != guessed:
+            # Replace the wrong name with the correct one in the SQL
+            # Replace only the value inside the quotes
+            sql = sql.replace(f"'{guessed}'", f"'{corrected}'", 1)
+            logger.info(f"🔧 Auto-corrected metric_name: '{guessed}' → '{corrected}'")
+    
+    # STEP 2: Execute the (possibly corrected) SQL
     conn = _get_db_connection()
     try:
         cursor = conn.execute(sql)
@@ -158,16 +202,17 @@ def tool_sql_query(sql: str) -> str:
     finally:
         conn.close()
 
+
 def tool_financial_ratio_calculator(ratio_name: str, **kwargs) -> str:
     try:
         ratio = ratio_name.lower()
         if ratio == "roe":
-            ni, eq = kwargs.get("net_income"), kwargs.get("equity")
+            ni, eq = kwargs.get("net_income"), kwargs.get("stockholders_equity")
             if ni is None or eq is None or eq == 0:
                 return "Error: Need net_income and equity (positive equity)."
             return f"ROE = {ni / eq:.4f}"
         elif ratio == "debt_equity":
-            liabilities, eq = kwargs.get("total_liabilities"), kwargs.get("equity")
+            liabilities, eq = kwargs.get("total_liabilities"), kwargs.get("stockholders_equity")
             if liabilities is None or eq is None or eq == 0:
                 return "Error: Need total_liabilities and equity."
             return f"Debt-to-Equity = {liabilities / eq:.4f}"
@@ -207,14 +252,37 @@ def tool_get_filing_metadata() -> str:
         conn.close()
 
     summary = f"""
-        Data Overview:
-        - Text Chunks: {meta.get('total_chunks', 0)} chunks from {meta.get('unique_sources', 0)} unique filing sources.
-        - Filing Types: {', '.join(meta.get('filing_types', ['N/A']))}
-        - Sample sources: {', '.join(meta.get('sample_sources', ['N/A']))}
+Data Overview:
+- Text Chunks: {meta.get('total_chunks', 0)} chunks from {meta.get('unique_sources', 0)} unique filing sources.
+- Filing Types: {', '.join(meta.get('filing_types', ['N/A']))}
+- Sample sources: {', '.join(meta.get('sample_sources', ['N/A']))}
 
-        Financial Metrics (SQLite):
-        - Total records: {total_rows}
-        - Date range: {min_date} to {max_date}
-        - Available metrics: {', '.join(metrics)}
-        """
+Financial Metrics (SQLite):
+- Total records: {total_rows}
+- Date range: {min_date} to {max_date}
+- Available metrics: {', '.join(metrics)}
+    """
     return summary.strip()
+
+def precheck_question_feasibility(query: str) -> str | None:
+    """
+    Checks if the requested year exists in the DB.
+    Returns None if OK, otherwise returns an error message to short-circuit the agent.
+    """
+    import re
+    conn = _get_db_connection()
+    try:
+        row = conn.execute("SELECT MIN(period_end) as min_date, MAX(period_end) as max_date FROM financial_metrics").fetchone()
+        min_year = int(row["min_date"][:4]) if row["min_date"] else 2020
+        max_year = int(row["max_date"][:4]) if row["max_date"] else 2024
+        
+        years = re.findall(r'\b(20\d{2})\b', query)
+        for y in years:
+            year_int = int(y)
+            if year_int < min_year or year_int > max_year:
+                return f"Data for {year_int} is not available. Available years: {min_year} to {max_year}."
+    except Exception as e:
+        logger.warning(f"Pre-check failed: {e}")
+    finally:
+        conn.close()
+    return None

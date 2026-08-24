@@ -5,42 +5,51 @@ from typing import Any, Dict, List
 from groq import AsyncGroq
 from config.config import settings
 from src.agent.state import AgentState
-from src.tools.financial_tools import ( tool_search_filings, tool_sql_query, tool_calculator, tool_financial_ratio_calculator, tool_get_filing_metadata,)
+from src.tools.financial_tools import (
+    tool_search_filings,
+    tool_sql_query,
+    tool_calculator,
+    tool_financial_ratio_calculator,
+    tool_get_filing_metadata,
+)
 from langfuse.decorators import observe
 from langfuse.decorators import langfuse_context
 
 logger = logging.getLogger(__name__)
 groq_client = AsyncGroq(api_key=settings.groq_api_key)
 
+# ------------------------------------------------------------------
+# Global tool definitions – used by the router filter
+# ------------------------------------------------------------------
 GROQ_TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "search_filings",
-            "description": "Search JPMorgan Chase SEC filings (10-K, 10-Q, 8-K) using hybrid retrieval.",
+            "description": "Hybrid search over SEC filing text for qualitative/narrative questions.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
-                    "top_k": {"type": "integer", "description": "Number of results", "default": 5},
+                    "top_k": {"type": "integer", "default": 5}
                 },
-                "required": ["query"],
-            },
-        },
+                "required": ["query"]
+            }
+        }
     },
     {
         "type": "function",
         "function": {
             "name": "sql_query",
-            "description": "Execute a read-only SQL SELECT query on the financial metrics database.",
+            "description": "Execute a read‑only SQL SELECT query on the financial_metrics table.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "sql": {"type": "string", "description": "SQL SELECT statement"},
+                    "sql": {"type": "string", "description": "SQL SELECT statement"}
                 },
-                "required": ["sql"],
-            },
-        },
+                "required": ["sql"]
+            }
+        }
     },
     {
         "type": "function",
@@ -50,11 +59,11 @@ GROQ_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "expression": {"type": "string", "description": "Mathematical expression"},
+                    "expression": {"type": "string", "description": "Math expression, e.g., '2 + 2'"}
                 },
-                "required": ["expression"],
-            },
-        },
+                "required": ["expression"]
+            }
+        }
     },
     {
         "type": "function",
@@ -66,19 +75,41 @@ GROQ_TOOLS = [
                 "properties": {
                     "ratio_name": {
                         "type": "string",
-                        "description": "One of: ROE, Debt_Equity, ROA, Current_Ratio, Quick_Ratio",
+                        "enum": ["ROE", "Debt_Equity", "ROA", "Current_Ratio", "Quick_Ratio"],
+                        "description": "The ratio to compute"
                     },
-                    "net_income": {"type": "number", "description": "Net income (for ROE, ROA)"},
-                    "equity": {"type": "number", "description": "Stockholders' equity (for ROE, Debt_Equity)"},
-                    "assets": {"type": "number", "description": "Total assets (for ROA)"},
-                    "total_liabilities": {"type": "number", "description": "Total liabilities (for Debt_Equity)"},
-                    "current_assets": {"type": "number", "description": "Current assets (for Current_Ratio, Quick_Ratio)"},
-                    "current_liabilities": {"type": "number", "description": "Current liabilities (for Current_Ratio, Quick_Ratio)"},
-                    "inventory": {"type": "number", "description": "Inventory (for Quick_Ratio, optional, default 0)"},
+                    "net_income": {
+                        "type": "number",
+                        "description": "Net income – retrieve via sql_query with metric_name = 'NetIncomeLoss' (case-sensitive). Required for ROE, ROA."
+                    },
+                    "equity": {
+                        "type": "number",
+                        "description": "Stockholders' equity – retrieve via sql_query with metric_name = 'StockholdersEquity' (case-sensitive). Required for ROE, Debt_Equity."
+                    },
+                    "assets": {
+                        "type": "number",
+                        "description": "Total assets – retrieve via sql_query with metric_name = 'Assets' (case-sensitive). Required for ROA."
+                    },
+                    "total_liabilities": {
+                        "type": "number",
+                        "description": "Total liabilities – retrieve via sql_query with metric_name = 'Liabilities' (case-sensitive). Required for Debt_Equity."
+                    },
+                    "current_assets": {
+                        "type": "number",
+                        "description": "Current assets – retrieve via sql_query with metric_name = 'Assets' (case-sensitive). Required for Current_Ratio, Quick_Ratio."
+                    },
+                    "current_liabilities": {
+                        "type": "number",
+                        "description": "Current liabilities – retrieve via sql_query with metric_name = 'Liabilities' (case-sensitive). Required for Current_Ratio, Quick_Ratio."
+                    },
+                    "inventory": {
+                        "type": "number",
+                        "description": "Inventory (optional, default 0). Used for Quick_Ratio."
+                    }
                 },
-                "required": ["ratio_name"],
-            },
-        },
+                "required": ["ratio_name"]
+            }
+        }
     },
     {
         "type": "function",
@@ -88,127 +119,229 @@ GROQ_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {},
-                "required": [],
-            },
-        },
-    },
+                "required": []
+            }
+        }
+    }
 ]
 
+# ------------------------------------------------------------------
+# 1. INTENT ROUTER (Bouncer) – Decides which tools are allowed
+# ------------------------------------------------------------------
+def route_intent(query: str) -> List[str]:
+    q = query.lower()
+    # Ratio questions
+    if any(word in q for word in ["roe", "roa", "debt_equity", "current_ratio", "quick_ratio", "ratio"]):
+        return ["sql_query", "financial_ratio_calculator"]
+    
+    # 🔥 FIXED: Single metric – ONLY sql_query, NO calculator
+    if any(word in q for word in ["net income", "assets", "liabilities", "equity", "revenue", "earnings", "total assets"]):
+        return ["sql_query"]  # <-- Removed 'calculator'
+    
+    # Narrative / qualitative
+    if any(word in q for word in ["risk", "factors", "business", "overview", "describe", "explain", "challenges"]):
+        return ["search_filings", "get_filing_metadata"]
+    
+    return ["search_filings", "sql_query", "calculator", "financial_ratio_calculator", "get_filing_metadata"]
+
+# ------------------------------------------------------------------
+# 2. POST-FILTER GUARDRAIL (Check numbers before final output)
+# ------------------------------------------------------------------
+def guardrail_verify_numbers(answer: str, contexts: List[str]) -> bool:
+    """Returns False if a number in the answer is NOT found in the contexts."""
+    nums_in_answer = re.findall(r'\d+\.?\d*', answer)
+    if not nums_in_answer:
+        return True  # No numbers to verify
+    full_context = " ".join(contexts)
+    for num in nums_in_answer:
+        if num not in full_context:
+            return False
+    return True
 
 def extract_numeric_values(sql_result: str) -> set:
     raw = re.findall(r'\d+\.?\d*', sql_result)
     return {float(n) for n in raw if n}
 
+
+# ------------------------------------------------------------------
+# 3. REASONING NODE (Uses the Intent Router)
+# ------------------------------------------------------------------
 @observe(as_type="generation")
 async def reasoning_node(state: AgentState) -> Dict[str, Any]:
-    logger.info(f"Reasoning step {state['iteration_count'] + 1}")
+    logger.info(f"Reasoning step {state.get('iteration_count', 0) + 1}")
 
-    max_iter = settings.max_iterations
-    force_final = state["iteration_count"] >= max_iter
+    # ------------------------------------------------------------------
+    # 1. Determine if we must force a final answer
+    # ------------------------------------------------------------------
+    current_iter = state.get("iteration_count", 0)
+    force_final = current_iter >= settings.max_iterations
 
+    # ------------------------------------------------------------------
+    # 2. Build / retrieve message history
+    # ------------------------------------------------------------------
     messages = state.get("messages", [])
+
     if not messages:
+        # Base system prompt (only built on the very first call)
         system_prompt = (
-            "You are a financial assistant for JPMorgan Chase & Co. "
-            "You have access to these tools:\n"
-            "- search_filings: hybrid search over SEC filing text (for qualitative/narrative questions)\n"
-            "- sql_query: read-only SQL over a table `financial_metrics` with columns "
-            "(metric_name, value, unit, period_end, form_type, filed_date). "
-            "Available metric_name values: NetIncomeLoss, Revenues, EarningsPerShareDiluted, "
-            "EarningsPerShareBasic, Assets, Liabilities, StockholdersEquity, OperatingIncomeLoss. "
-            "There is no company_name or ticker column — this table only contains JPMorgan data.\n"
-            "- calculator: arithmetic\n"
-            "- financial_ratio_calculator: computes ratios (ROE, ROA, Debt_Equity, Current_Ratio, Quick_Ratio) "
-            "given numeric inputs\n"
-            "- get_filing_metadata: discover available data ranges\n\n"
-            "CRITICAL RULES:\n"
-            "1. NEVER invent, estimate, or guess numeric values. Always retrieve real figures via sql_query "
-            "or search_filings first.\n"
-            "2. To compute a ratio, first query sql_query for the exact metric values you need "
-            "(e.g., most recent NetIncomeLoss and StockholdersEquity), THEN call financial_ratio_calculator "
-            "with those real retrieved numbers.\n"
-            "3. If you don't have enough real data yet, call a retrieval tool — do not answer with placeholder numbers.\n"
-            "4. Only compute the ratio(s) the user explicitly asked for — do not calculate additional ratios "
-            "unless requested.\n"
-            "5. Before calling financial_ratio_calculator, you MUST have retrieved EVERY numeric input "
-            "(e.g., both net_income AND equity for ROE) via sql_query in this conversation. "
-            "Never supply a number you have not just retrieved.\n"
-            "6. Once you have successfully computed the ratio the user asked for, STOP and answer immediately. "
-            "Do not continue calling tools after you have the answer."
+            "You are a financial assistant for JPMorgan Chase & Co.\n\n"
+            "⚠️ DATABASE SCHEMA (CASE-SENSITIVE!):\n"
+            "Table: financial_metrics\n"
+            "Columns: id (ignored), metric_name, value, unit, period_end, form_type, filed_date.\n"
+            "Valid metric_name values (case‑sensitive): Assets, EarningsPerShareBasic, EarningsPerShareDiluted, Liabilities, NetIncomeLoss, OperatingIncomeLoss, Revenues, StockholdersEquity.\n"
+            "🔴 NO other columns exist (no 'company', 'ticker', 'date', or 'net_income').\n\n"
+            "📌 EXACT RULES:\n"
+            "1. SINGLE METRIC (e.g., 'net income', 'total assets'):\n"
+            "   → Run EXACTLY ONE SQL: SELECT value FROM financial_metrics WHERE metric_name = '<EXACT_NAME>' ORDER BY period_end DESC LIMIT 1;\n"
+            "   → STOP immediately. Do NOT run calculator or any other tool.\n"
+            "2. RATIO (e.g., 'ROE', 'ROA'):\n"
+            "   → Run SQL to get the required metrics, then call financial_ratio_calculator with those exact numbers.\n"
+            "3. QUALITATIVE (e.g., 'risk factors'):\n"
+            "   → Call search_filings ONCE and STOP.\n"
+            "4. NEVER guess numbers. Use JSON function-calling format."
         )
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": state["query"]}
         ]
 
-    final_messages = messages
+    # ------------------------------------------------------------------
+    # 3. If force_final, add a system message to stop tool calls
+    # ------------------------------------------------------------------
     if force_final:
-        final_messages = messages + [{
+        messages = messages + [{
             "role": "system",
-            "content": "You can no longer call any tools. Based on everything retrieved so far, "
-                       "give your final answer now in plain natural language. Do not attempt to call a function."
+            "content": "You can no longer call tools. Answer now in plain text."
         }]
 
-    response = await groq_client.chat.completions.create(
-        model=settings.GROQ_MODEL,
-        messages=final_messages,
-        tools=None if force_final else GROQ_TOOLS,
-        tool_choice="none" if force_final else "auto",
-        temperature=0.2,
-        parallel_tool_calls=False,
-    )
+    # ------------------------------------------------------------------
+    # 4. Filter tools based on intent & inject restriction into messages
+    # ------------------------------------------------------------------
+    # Default values (safe fallback)
+    tools_to_use = None
+    tool_choice = "none"
 
-    assistant_message = response.choices[0].message
-    clean_msg = {"role": "assistant", "content": assistant_message.content}
-    langfuse_context.update_current_observation(
-        name="groq_llm_call",
-        input={"messages": final_messages},
-        output={"content": assistant_message.content},
-        metadata={
-            "model": settings.GROQ_MODEL,
-            "temperature": 0.2,
-            "tool_choice": "auto" if not force_final else "none",
-        },
-    )
+    if not force_final:
+        allowed_names = route_intent(state["query"])
+        tools_to_use = [t for t in GROQ_TOOLS if t["function"]["name"] in allowed_names]
+        tool_choice = "auto"
 
-    if hasattr(response, "usage") and response.usage:
-        langfuse_context.update_current_observation(
-            usage={
-                "input": response.usage.prompt_tokens,
-                "output": response.usage.completion_tokens,
-                "total": response.usage.total_tokens,
-            }
+        # 🔥 FIX: Inject the tool restriction directly into the messages list
+        # so the LLM actually sees it before making the API call.
+        restriction_msg = (
+            f"🔒 You are ONLY allowed to use these tools: {', '.join(allowed_names)}. "
+            "If a tool is not in this list, do NOT attempt to call it. "
+            "NEVER use XML tags like <function=...>. Use the JSON tool-calling interface."
         )
 
-    tool_calls = assistant_message.tool_calls
+        # Update the existing system message with the restriction
+        if messages and messages[0]["role"] == "system":
+            messages[0]["content"] += f"\n\n{restriction_msg}"
+        else:
+            # Safety: if there's no system message, insert one
+            messages.insert(0, {"role": "system", "content": restriction_msg})
+
+    # ------------------------------------------------------------------
+    # 5. Call Groq with proper error handling
+    # ------------------------------------------------------------------
+    assistant_content = None
+    tool_calls = []
+    api_error = None
+
+    try:
+        response = await groq_client.chat.completions.create(
+            model=settings.GROQ_MODEL,
+            messages=messages,
+            tools=tools_to_use,
+            tool_choice=tool_choice,
+            temperature=0.2,
+            parallel_tool_calls=False,
+        )
+        assistant_message = response.choices[0].message
+        assistant_content = assistant_message.content or ""
+        tool_calls = assistant_message.tool_calls or []
+
+    except Exception as e:
+        logger.error(f"Groq API call failed: {e}")
+        api_error = str(e)
+
+    # ------------------------------------------------------------------
+    # 6. Update Langfuse observation (safely)
+    # ------------------------------------------------------------------
+    try:
+        langfuse_context.update_current_observation(
+            name="groq_llm_call",
+            input={"messages": messages},
+            output={"content": assistant_content, "tool_calls": tool_calls},
+            metadata={
+                "model": settings.GROQ_MODEL,
+                "temperature": 0.2,
+                "tool_choice": tool_choice,
+                "forced_final": force_final,
+                "api_error": api_error,
+            },
+        )
+    except Exception as e:
+        logger.warning(f"Langfuse update failed: {e}")
+
+    # ------------------------------------------------------------------
+    # 7. Build return state
+    # ------------------------------------------------------------------
+    if assistant_content is None:
+        assistant_content = "I encountered an internal error while processing your request."
+
+    clean_msg = {"role": "assistant", "content": assistant_content}
+
+    # If API error occurred, treat it as a final answer
+    if api_error:
+        return {
+            "messages": [clean_msg],
+            "final_answer": assistant_content,
+            "iteration_count": current_iter + 1,
+        }
+
+    # If there are tool calls, parse and return them
     if tool_calls:
+        parsed_tool_calls = []
+        for tc in tool_calls:
+            try:
+                args = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                args = {}
+            parsed_tool_calls.append({
+                "id": tc.id,
+                "name": tc.function.name,
+                "arguments": args,
+            })
+
         clean_msg["tool_calls"] = [
             {
                 "id": tc.id,
                 "type": "function",
-                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                }
             }
             for tc in tool_calls
         ]
 
-        tool_calls_to_execute = [
-            {"id": tc.id, "name": tc.function.name, "arguments": json.loads(tc.function.arguments)}
-            for tc in tool_calls
-        ]
-
         return {
             "messages": [clean_msg],
-            "tool_calls_made": [tc["name"] for tc in tool_calls_to_execute],
-            "pending_tool_calls": tool_calls_to_execute,
-            "iteration_count": state["iteration_count"] + 1,
-        }
-    else:
-        return {
-            "messages": [clean_msg],
-            "final_answer": assistant_message.content,
-            "iteration_count": state["iteration_count"] + 1,
+            "tool_calls_made": [tc["name"] for tc in parsed_tool_calls],
+            "pending_tool_calls": parsed_tool_calls,
+            "iteration_count": current_iter + 1,
         }
 
+    # No tool calls – final answer
+    return {
+        "messages": [clean_msg],
+        "final_answer": assistant_content,
+        "iteration_count": current_iter + 1,
+    }
+# ------------------------------------------------------------------
+# 4. TOOL EXECUTION NODE
+# ------------------------------------------------------------------
 @observe(as_type="span")
 async def tool_execution_node(state: AgentState) -> Dict[str, Any]:
     pending = state.get("pending_tool_calls", [])
@@ -232,8 +365,7 @@ async def tool_execution_node(state: AgentState) -> Dict[str, Any]:
                 logger.warning(f"Rejected unverified inputs: {unverified}")
                 error_msg = (
                     f"Error: The value(s) for {unverified} were not found in any sql_query "
-                    f"result in this conversation. You must call sql_query to retrieve the "
-                    f"real value before using it. Do not guess or estimate."
+                    f"result. You must call sql_query to retrieve the real value before using it."
                 )
                 results.append({
                     "tool_call_id": tc["id"],
@@ -289,38 +421,64 @@ async def tool_execution_node(state: AgentState) -> Dict[str, Any]:
         "pending_tool_calls": [],
     }
 
+
+# ------------------------------------------------------------------
+# 5. FINALIZER NODE (with Post-Filter Guardrail)
+# ------------------------------------------------------------------
 @observe(as_type="span")
 async def finalizer_node(state: AgentState) -> Dict[str, Any]:
+    # Early exit if answer already exists
     if state.get("final_answer"):
         return {"final_answer": state["final_answer"]}
+
+    # Default fallback
+    final_answer = "I couldn't generate a proper answer."
 
     messages = state["messages"]
     system_message = {
         "role": "system",
         "content": (
-            "You are a financial assistant. Based on the conversation history (including tool results), "
-            "provide a clear, concise, and accurate answer to the user's original query. "
-            "If you don't have enough information, say so. "
-            "Do not mention internal tool names; just give the final answer. "
-            "Do not use LaTeX or markdown formatting like \\boxed{}; just write plain text."
+            "Provide a clear, concise answer to the user's original query using the tool results. "
+            "If the user asked for a number, just state the number. Do not mention internal tools."
         )
     }
     full_messages = [system_message] + messages
 
-    response = await groq_client.chat.completions.create(
-        model=settings.GROQ_MODEL,
-        messages=full_messages,
-        temperature=0.3,
-    )
+    try:
+        response = await groq_client.chat.completions.create(
+            model=settings.GROQ_MODEL,
+            messages=full_messages,
+            temperature=0.3,
+        )
+        if response.choices and response.choices[0].message.content is not None:
+            final_answer = response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Finalizer API call failed: {e}")
 
-    langfuse_context.update_current_span(
-        name="groq_finalizer",
-        input={"messages": full_messages},
-        output={"content": final_answer},
-        metadata={"model": settings.GROQ_MODEL, "temperature": 0.3},
-    )
+    # Clean up markdown if present
+    try:
+        final_answer = re.sub(r'\$\\boxed\{([^}]+)\}\$', r'\1', final_answer)
+        final_answer = re.sub(r'\\boxed\{([^}]+)\}', r'\1', final_answer)
+    except Exception:
+        pass
 
-    final_answer = response.choices[0].message.content
-    final_answer = re.sub(r'\$\\boxed\{([^}]+)\}\$', r'\1', final_answer)
-    final_answer = re.sub(r'\\boxed\{([^}]+)\}', r'\1', final_answer)
+    # 🛡️ POST-FILTER GUARDRAIL
+    all_contexts = []
+    for tr in state.get("tool_results", []):
+        all_contexts.append(tr["result"])
+
+    if not guardrail_verify_numbers(final_answer, all_contexts):
+        logger.warning("🔴 Guardrail triggered: Unverified numbers found. Blocking hallucination.")
+        final_answer = "I couldn't verify that exact number in the retrieved documents. Please check the source."
+
+    try:
+        langfuse_context.update_current_span(
+            name="groq_finalizer",
+            input={"messages": full_messages},
+            output={"content": final_answer},
+            metadata={"model": settings.GROQ_MODEL, "temperature": 0.3},
+        )
+    except Exception:
+        pass
+
     return {"final_answer": final_answer}
